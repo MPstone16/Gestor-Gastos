@@ -33,7 +33,15 @@
           "imageWidth": 76
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Permite el acceso a la cámara para fotografiar comprobantes de tus gastos.",
+          "photosPermission": "Permite el acceso a tus fotos para adjuntar comprobantes a tus gastos."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -9,6 +9,14 @@ Una aplicación móvil moderna para Android desarrollada con **Expo (React Nativ
 
 >  **Este proyecto es la base para un taller progresivo de desarrollo móvil**. 
 Los alumnos comenzarán con esta versión base (sin persistencia de datos) y avanzarán implementando AsyncStorage, SQLite 
+
+## Funcionalidades de gastos
+
+- Registrar gastos con fecha seleccionable y categoría.
+- Adjuntar comprobantes desde la cámara o la galería; las imágenes se guardan en el almacenamiento privado de la aplicación.
+- Editar o eliminar gastos guardados localmente en SQLite.
+- Ordenar los gastos del mes actual por monto, de mayor a menor.
+
 ---
 ##  Instalación y Configuración
 
@@ -68,6 +76,8 @@ npx expo install react-native-screens
 npx expo install expo-device
 npx expo install expo-web-browser
 npx expo install react-native-web
+npx expo install expo-image-picker expo-file-system
+npx expo install @react-native-community/datetimepicker
 ```
 
 | Dependencia | Para qué sirve |
@@ -85,4 +95,6 @@ npx expo install react-native-web
 | `react-native-gesture-handler` | Gestos táctiles |
 | `react-native-safe-area-context`, `react-native-screens` | Áreas seguras y pantallas nativas |
 | `expo-device`, `expo-web-browser` | Información del dispositivo y navegador |
+| `expo-image-picker`, `expo-file-system` | Seleccionar comprobantes y guardarlos localmente |
+| `@react-native-community/datetimepicker` | Elegir la fecha del gasto |
 | `react-native-web` | Ejecutar la app en el navegador |

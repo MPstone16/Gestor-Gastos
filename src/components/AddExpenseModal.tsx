@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Image,
   Modal,
   StyleSheet,
   Text,
@@ -14,58 +15,169 @@ import {
 import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { Category, CATEGORIES, CATEGORY_ICONS } from '@/types/expense';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import * as ImagePicker from 'expo-image-picker';
+import { Category, CATEGORIES, CATEGORY_ICONS, Expense } from '@/types/expense';
 import { LiquidGlassColors, Spacing } from '@/constants/theme';
 import { useExpenses } from '@/context/ExpenseContext';
+import { deleteStoredReceipt, saveReceipt } from '@/database/receiptStorage';
 
 interface AddExpenseModalProps {
   visible: boolean;
   onClose: () => void;
+  expense?: Expense | null;
 }
 
-// Modal que sube desde abajo para registrar un gasto.
-// Para poder agregarlo hacen falta el monto y la categoria; la descripcion es opcional.
+function getAmountError(value: string): string | undefined {
+  if (!value) return 'El monto es obligatorio.';
+  if (!/^\d+([.,]\d{1,2})?$/.test(value)) {
+    return 'Ingresa solo números y hasta dos decimales.';
+  }
+
+  const parsedAmount = Number(value.replace(',', '.'));
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    return 'El monto debe ser mayor que cero.';
+  }
+
+  return undefined;
+}
+
+function getDescriptionError(value: string): string | undefined {
+  if (value.length > 400) return 'La descripción no puede superar 400 caracteres.';
+  if (!/^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 ]*$/.test(value)) {
+    return 'Usa solo letras, números y espacios.';
+  }
+
+  return undefined;
+}
+
 export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   visible,
   onClose,
+  expense,
 }) => {
-  const { addExpense } = useExpenses();
-  // El monto es string porque asi trabaja el TextInput; se pasa a numero al guardar
-  const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState<Category | null>(null);
-  const [description, setDescription] = useState('');
+  const { addExpense, updateExpense } = useExpenses();
+  const [amount, setAmount] = useState(expense ? String(expense.amount) : '');
+  const [category, setCategory] = useState<Category | null>(expense?.category ?? null);
+  const [description, setDescription] = useState(expense?.description ?? '');
+  const [date, setDate] = useState(expense ? new Date(expense.date) : new Date());
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [receiptUri, setReceiptUri] = useState<string | undefined>(expense?.receiptUri);
+  const [receiptChanged, setReceiptChanged] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [amountError, setAmountError] = useState<string>();
+  const [categoryError, setCategoryError] = useState<string>();
+  const [descriptionError, setDescriptionError] = useState<string>();
 
-  // async porque ahora hay que esperar a que el gasto se guarde en el telefono
-  const handleSubmit = async () => {
-    if (!amount || !category) return;
+  const resetForm = () => {
+    setAmount('');
+    setCategory(null);
+    setDescription('');
+    setDate(new Date());
+    setDatePickerVisible(false);
+    setReceiptUri(undefined);
+    setReceiptChanged(false);
+    setIsSaving(false);
+    setAmountError(undefined);
+    setCategoryError(undefined);
+    setDescriptionError(undefined);
+  };
 
+  const selectReceipt = async (source: 'camera' | 'gallery') => {
     try {
-      await addExpense({
-        amount: parseFloat(amount),
-        category,
-        date: new Date(),
-        description: description.trim() || undefined,
-      });
+      const permission = source === 'camera'
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permission.granted) {
+        Alert.alert(
+          'Permiso necesario',
+          source === 'camera'
+            ? 'Permite el acceso a la cámara en los ajustes para tomar una foto.'
+            : 'Permite el acceso a tus fotos en los ajustes para elegir un comprobante.'
+        );
+        return;
+      }
+
+      const result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.85 })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
+
+      if (result.canceled) {
+        Alert.alert('Selección cancelada', 'No se seleccionó ningún comprobante.');
+        return;
+      }
+
+      setReceiptUri(result.assets[0].uri);
+      setReceiptChanged(true);
     } catch (error) {
-      // Si no se pudo guardar, se avisa y el modal queda abierto con los datos
-      console.error('Error al guardar el gasto', error);
-      Alert.alert('Error', 'No se pudo guardar el gasto. Intenta de nuevo.');
+      console.error('No se pudo seleccionar el comprobante', error);
+      Alert.alert('Error', 'No se pudo abrir la cámara o la galería. Intenta de nuevo.');
+    }
+  };
+
+  const handleSubmit = async () => {
+    const nextAmountError = getAmountError(amount);
+    const nextCategoryError = category ? undefined : 'Selecciona una categoría para continuar.';
+    const nextDescriptionError = getDescriptionError(description);
+    setAmountError(nextAmountError);
+    setCategoryError(nextCategoryError);
+    setDescriptionError(nextDescriptionError);
+
+    if (nextAmountError || nextCategoryError || nextDescriptionError || !category) {
       return;
     }
 
-    // Reset form
-    setAmount('');
-    setCategory(null);
-    setDescription('');
+    const parsedAmount = Number(amount.replace(',', '.'));
+    if (Number.isNaN(date.getTime())) {
+      Alert.alert('Fecha inválida', 'Selecciona una fecha válida para el gasto.');
+      return;
+    }
+
+    setIsSaving(true);
+    let newlySavedReceiptUri: string | undefined;
+    try {
+      let savedReceiptUri = receiptUri;
+      if (receiptChanged && receiptUri) {
+        newlySavedReceiptUri = await saveReceipt(receiptUri);
+        savedReceiptUri = newlySavedReceiptUri;
+      } else if (receiptChanged) {
+        savedReceiptUri = undefined;
+      }
+
+      const expenseData = {
+        amount: parsedAmount,
+        category,
+        date,
+        description: description.trim() || undefined,
+        receiptUri: savedReceiptUri,
+      };
+
+      if (expense) {
+        await updateExpense({ ...expenseData, id: expense.id });
+      } else {
+        await addExpense(expenseData);
+      }
+    } catch (error) {
+      console.error('Error al guardar los cambios del gasto', error);
+      if (newlySavedReceiptUri) {
+        try {
+          await deleteStoredReceipt(newlySavedReceiptUri);
+        } catch (cleanupError) {
+          console.error('No se pudo limpiar el comprobante no guardado', cleanupError);
+        }
+      }
+      Alert.alert('Error', 'No se pudo guardar el gasto. Tus datos siguen en el formulario.');
+      setIsSaving(false);
+      return;
+    }
+
+    resetForm();
     onClose();
   };
 
-
-  // Igual que al guardar, se limpia el formulario para que no quede texto viejo
   const handleClose = () => {
-    setAmount('');
-    setCategory(null);
-    setDescription('');
+    resetForm();
     onClose();
   };
 
@@ -105,7 +217,9 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                 keyboardShouldPersistTaps="handled"
                 contentContainerStyle={styles.scrollContent}
               >
-                <Text style={styles.title}>Agregar Gasto</Text>
+                <Text style={styles.title}>
+                  {expense ? 'Editar gasto' : 'Agregar gasto'}
+                </Text>
 
                 <View style={styles.inputSection}>
                   <Text style={styles.label}>Monto (USD)</Text>
@@ -114,12 +228,64 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                     <TextInput
                       style={styles.input}
                       value={amount}
-                      onChangeText={setAmount}
+                      onChangeText={(value) => {
+                        setAmount(value);
+                        setAmountError(value ? getAmountError(value) : undefined);
+                      }}
                       placeholder="0.00"
                       keyboardType="decimal-pad"
                       placeholderTextColor={LiquidGlassColors.glassTextSecondary}
+                      accessibilityLabel="Monto en dólares"
+                      accessibilityHint={amountError}
                     />
                   </View>
+                  {amountError && (
+                    <Text style={styles.errorText} accessibilityRole="alert">
+                      {amountError}
+                    </Text>
+                  )}
+                </View>
+
+                <View style={styles.inputSection}>
+                  <Text style={styles.label}>Fecha del gasto *</Text>
+                  <TouchableOpacity
+                    style={styles.dateButton}
+                    onPress={() => setDatePickerVisible((isVisible) => !isVisible)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Elegir fecha del gasto"
+                  >
+                    <Text style={styles.dateButtonText}>
+                      {date.toLocaleDateString('es-ES', {
+                        day: '2-digit',
+                        month: 'long',
+                        year: 'numeric',
+                      })}
+                    </Text>
+                    <Text style={styles.dateButtonIcon}>📅</Text>
+                  </TouchableOpacity>
+                  {datePickerVisible && (
+                    <View style={styles.datePickerContainer}>
+                      <DateTimePicker
+                        value={date}
+                        mode="date"
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        onChange={(event, selectedDate) => {
+                          if (event.type === 'set' && selectedDate) setDate(selectedDate);
+                          if (Platform.OS !== 'ios' || event.type !== 'set') {
+                            setDatePickerVisible(false);
+                          }
+                        }}
+                      />
+                      {Platform.OS === 'ios' && (
+                        <TouchableOpacity
+                          style={styles.dateDoneButton}
+                          onPress={() => setDatePickerVisible(false)}
+                        >
+                          <Text style={styles.dateDoneText}>Listo</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
                 </View>
 
                 <View style={styles.inputSection}>
@@ -134,7 +300,10 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                     {CATEGORIES.map((cat) => (
                       <TouchableOpacity
                         key={cat}
-                        onPress={() => setCategory(cat)}
+                        onPress={() => {
+                          setCategory(cat);
+                          setCategoryError(undefined);
+                        }}
                         style={[
                           styles.categoryButton,
                           category === cat && styles.categoryButtonActive,
@@ -166,6 +335,48 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
+                  {categoryError && (
+                    <Text style={styles.errorText} accessibilityRole="alert">
+                      {categoryError}
+                    </Text>
+                  )}
+                </View>
+
+                <View style={styles.inputSection}>
+                  <Text style={styles.label}>Comprobante (opcional)</Text>
+                  {receiptUri ? (
+                    <View style={styles.receiptPreviewContainer}>
+                      <Image source={{ uri: receiptUri }} style={styles.receiptPreview} />
+                      <TouchableOpacity
+                        style={styles.removeReceiptButton}
+                        onPress={() => {
+                          setReceiptUri(undefined);
+                          setReceiptChanged(true);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Quitar comprobante"
+                      >
+                        <Text style={styles.removeReceiptText}>Quitar comprobante</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.receiptActions}>
+                      <TouchableOpacity
+                        style={styles.receiptButton}
+                        onPress={() => selectReceipt('camera')}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.receiptButtonText}>Tomar foto</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.receiptButton}
+                        onPress={() => selectReceipt('gallery')}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.receiptButtonText}>Elegir imagen</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
 
                 <View style={styles.inputSection}>
@@ -173,11 +384,23 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                   <TextInput
                     style={[styles.input, styles.descriptionInput]}
                     value={description}
-                    onChangeText={setDescription}
+                    onChangeText={(value) => {
+                      setDescription(value);
+                      setDescriptionError(getDescriptionError(value));
+                    }}
                     placeholder="Ej: Almuerzo, transporte a la universidad..."
                     placeholderTextColor={LiquidGlassColors.glassTextSecondary}
+                    maxLength={400}
                     multiline
+                    accessibilityLabel="Descripción opcional, máximo 400 caracteres"
+                    accessibilityHint={descriptionError}
                   />
+                  {descriptionError && (
+                    <Text style={styles.errorText} accessibilityRole="alert">
+                      {descriptionError}
+                    </Text>
+                  )}
+                  <Text style={styles.characterCount}>{description.length}/400</Text>
                 </View>
 
                 <View style={styles.buttonContainer}>
@@ -191,10 +414,10 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                   <TouchableOpacity
                     style={[
                       styles.submitButton,
-                      (!amount || !category) && styles.submitButtonDisabled,
+                      isSaving && styles.submitButtonDisabled,
                     ]}
                     onPress={handleSubmit}
-                    disabled={!amount || !category}
+                    disabled={isSaving}
                   >
                     <LinearGradient
                       colors={[LiquidGlassColors.primary, LiquidGlassColors.secondary]}
@@ -202,7 +425,13 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                       end={{ x: 1, y: 1 }}
                       style={styles.submitGradient}
                     >
-                      <Text style={styles.submitButtonText}>Agregar</Text>
+                      <Text style={styles.submitButtonText}>
+                        {isSaving
+                          ? 'Guardando...'
+                          : expense
+                            ? 'Guardar cambios'
+                            : 'Agregar'}
+                      </Text>
                     </LinearGradient>
                   </TouchableOpacity>
                 </View>
@@ -234,7 +463,7 @@ const styles = StyleSheet.create({
   },
   modalBackground: {
     // Bajito a proposito: si es casi opaco no se ve el blur del fondo
-    backgroundColor: 'rgba(255, 255, 255, 0.45)',
+    backgroundColor: LiquidGlassColors.glassPanelBackground,
     borderTopLeftRadius: Spacing.four,
     borderTopRightRadius: Spacing.four,
   },
@@ -275,7 +504,7 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    backgroundColor: LiquidGlassColors.glassInputBackground,
     borderRadius: Spacing.two,
     borderWidth: 1,
     borderColor: LiquidGlassColors.glassBorder,
@@ -293,8 +522,50 @@ const styles = StyleSheet.create({
     color: LiquidGlassColors.glassText,
     paddingVertical: Spacing.three,
   },
+  errorText: {
+    color: LiquidGlassColors.secondary,
+    fontSize: 12,
+    marginTop: Spacing.one,
+  },
+  characterCount: {
+    color: LiquidGlassColors.glassTextSecondary,
+    fontSize: 12,
+    textAlign: 'right',
+    marginTop: Spacing.one,
+  },
+  dateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: LiquidGlassColors.glassInputBackground,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: LiquidGlassColors.glassBorder,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.three,
+  },
+  dateButtonText: {
+    fontSize: 16,
+    color: LiquidGlassColors.glassText,
+  },
+  dateButtonIcon: {
+    fontSize: 20,
+  },
+  datePickerContainer: {
+    marginTop: Spacing.two,
+    alignItems: 'center',
+  },
+  dateDoneButton: {
+    alignSelf: 'flex-end',
+    padding: Spacing.two,
+  },
+  dateDoneText: {
+    color: LiquidGlassColors.primary,
+    fontSize: 16,
+    fontWeight: '600',
+  },
   descriptionInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    backgroundColor: LiquidGlassColors.glassInputBackground,
     borderRadius: Spacing.two,
     borderWidth: 1,
     borderColor: LiquidGlassColors.glassBorder,
@@ -310,7 +581,7 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   categoryButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    backgroundColor: LiquidGlassColors.glassInputBackground,
     borderRadius: Spacing.two,
     borderWidth: 1,
     borderColor: LiquidGlassColors.glassBorder,
@@ -342,6 +613,42 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
+  receiptActions: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+  },
+  receiptButton: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: LiquidGlassColors.glassInputBackground,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: LiquidGlassColors.glassBorder,
+    paddingVertical: Spacing.three,
+  },
+  receiptButtonText: {
+    color: LiquidGlassColors.glassText,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  receiptPreviewContainer: {
+    alignItems: 'flex-start',
+    gap: Spacing.two,
+  },
+  receiptPreview: {
+    width: 120,
+    height: 120,
+    borderRadius: Spacing.two,
+    backgroundColor: LiquidGlassColors.glassInputBackground,
+  },
+  removeReceiptButton: {
+    paddingVertical: Spacing.one,
+  },
+  removeReceiptText: {
+    color: LiquidGlassColors.primary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
   buttonContainer: {
     flexDirection: 'row',
     gap: Spacing.two,
@@ -349,7 +656,7 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    backgroundColor: LiquidGlassColors.glassInputBackground,
     borderRadius: Spacing.two,
     borderWidth: 1,
     borderColor: LiquidGlassColors.glassBorder,

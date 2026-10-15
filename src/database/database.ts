@@ -14,4 +14,9 @@ export async function initDatabase(db: SQLiteDatabase): Promise <void> {
             description     TEXT
         );
     `);
+
+    const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(expenses)');
+    if (!columns.some((column) => column.name === 'receipt_uri')) {
+        await db.execAsync('ALTER TABLE expenses ADD COLUMN receipt_uri TEXT');
+    }
 }

@@ -25,10 +25,18 @@ export const LiquidGlassColors = {
   primary: '#FF6B9D',      // Coral rosado intenso
   secondary: '#C44569',    // Vino/burgundy profundo
   accent: '#A8E6CF',       // Verde menta suave (contraste)
+  screenBackground: ['#FFF5F9', '#FFE8F0', '#FFF9FC'] as const,
+  orbPink: 'rgba(255, 107, 157, 0.55)',
+  orbOrange: 'rgba(255, 159, 94, 0.5)',
+  orbPurple: 'rgba(168, 120, 220, 0.4)',
+  primaryGlass: 'rgba(255, 107, 157, 0.7)',
+  secondaryGlass: 'rgba(196, 69, 105, 0.7)',
 
   // Fondos con transparencia para efecto glass
   glassBackground: 'rgba(255, 107, 157, 0.08)',     // Muy sutil
   glassBackgroundDark: 'rgba(196, 69, 105, 0.12)',  // Un poco más intenso
+  glassPanelBackground: 'rgba(255, 255, 255, 0.45)',
+  glassInputBackground: 'rgba(255, 255, 255, 0.5)',
 
   // Bordes glass
   glassBorder: 'rgba(255, 107, 157, 0.25)',
@@ -37,6 +45,7 @@ export const LiquidGlassColors = {
   glassText: '#2C1B47',           // Púrpura oscuro profundo
   glassTextLight: '#FFFBF5',      // Blanco cálido (no puro)
   glassTextSecondary: '#8B6B8F',  // Malva grisáceo
+  danger: '#C0395B',
 
   // Sombras
   shadowLight: 'rgba(255, 107, 157, 0.15)',
